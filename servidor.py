@@ -7,7 +7,8 @@ from firebase_admin import messaging
 from collections import Counter
 
 #Excluir coleções
-def delete_collection(coll_ref, batch_size):
+def deletar_colletion(coll_ref, batch_size):
+    '''função para deletar a collection quando identificada a necessidade'''
     docs = coll_ref.list_documents(page_size=batch_size)
     deleted = 0
 
@@ -17,11 +18,11 @@ def delete_collection(coll_ref, batch_size):
         deleted = deleted + 1
 
     if deleted >= batch_size:
-        return delete_collection(coll_ref, batch_size)
+        return deletar_colletion(coll_ref, batch_size)
     
 #Realizar o envio de notificações
-def send_notification(registration_token, mensagem):
-   
+def enviar_notificacao(registration_token, mensagem):
+    '''função para enviar notificação aos aparelhos envolvidos na alteração de preço'''
     message = messaging.Message(
         notification=messaging.Notification(
             title = "Chegou uma alteração nos preços",
@@ -35,31 +36,41 @@ def send_notification(registration_token, mensagem):
 
 
 
-cred = credentials.Certificate(r"C:\Users\Risti\Documents\TCC\Servidor Python\Chave\postoaqui-f3273-firebase-adminsdk-kggvt-f686f021b9.json")# Substitua pelo caminho para suas próprias credenciais
-app = firebase_admin.initialize_app(cred)
+def cria_instancia_firebase():
+    '''Inicializar o client do firestore e criar instancia do banco de dados'''
+    cred = credentials.Certificate(r"C:\Users\Risti\Documents\TCC\Servidor Python\Chave\postoaqui-f3273-firebase-adminsdk-kggvt-f686f021b9.json")# Substitua pelo caminho para suas próprias credenciais
+    app = firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    return db
 
-#Inicializar o client do firestore
-db = firestore.client()
+#Acessar a lista de Postos
+def retorna_collection_e_stream(db,nome,sub_colletion=None):
+    '''retorna a collection e a stream'''
+
+    if sub_colletion is None:
+        colletion = db.collection(nome)
+        stream = colletion.stream()
+
+    else:
+        colletion = sub_colletion.collection(nome)
+        stream = colletion.stream()
+
+    return colletion, stream
+
+db = cria_instancia_firebase()
 
 #Obter nome dos postos que sofreram alteração
 posto_alter = []
-
 mensagem = ''
 
-#Acessar a lista de Postos
-postos_ref = db.collection('Postos')
-postos_docs = postos_ref.stream()
-
-#Acessar a lista de Aparelhos cadastrados
-aparelhos_ref = db.collection('Aparelhos')
-aparelhos_docs = aparelhos_ref.stream()
+postos_ref, postos_doc = retorna_collection_e_stream(db,'Postos')
+aparelhos_ref, aparelhos_docs = retorna_collection_e_stream(db,'Aparelhos')
 
 #Acessar todos os postos
-for postos in postos_docs:
+for posto in postos_doc:
 #Acessar a subcoleção PrecosUsuarios de cada posto cadastrado no aplicativo 
-    teste_posto = postos.to_dict()
-    precos_usuarios_ref = postos.reference.collection('PrecosUsuarios')
-    preco_usuario_docs = precos_usuarios_ref.stream()
+    teste_posto = posto.to_dict()
+    precos_usuarios_ref, precos_usuarios_ref = retorna_collection_e_stream(None,'PrecosUsuarios',posto)
     print(teste_posto['nome'])
 
     lista_preco_gas = []
@@ -67,8 +78,9 @@ for postos in postos_docs:
     lista_preco_die = []
 
 #Acessar os documentos da subcoleção PreçosUsuarios
-    for preco_usuario in preco_usuario_docs:
-        data_usuario = preco_usuario.to_dict()
+    for preco in precos_usuarios_ref:
+        data_usuario = preco.to_dict()
+
         if 'precoGas' in data_usuario:
             valor_gas = float(data_usuario['precoGas'].replace(',', '.'))
             lista_preco_gas.append(valor_gas)
@@ -84,7 +96,7 @@ for postos in postos_docs:
             lista_preco_die.append(valor_die)
             print(lista_preco_die)
     
-#Obter os valores que mais se repetem
+        #Obter os valores que mais se repetem
         quantidade_valores_gas = Counter(lista_preco_gas)
         quantidade_valores_al = Counter(lista_preco_al)
         quantidade_valores_die = Counter(lista_preco_die)
@@ -99,7 +111,7 @@ for postos in postos_docs:
         print(valor_repetido_al)
         print(valor_repetido_die)
     
-        preco_ref = postos.reference.collection('Precos')
+        preco_ref = posto.reference.collection('Precos')
         preco_docs = preco_ref.stream()
 
         for preco_final in preco_docs:
@@ -111,10 +123,8 @@ for postos in postos_docs:
 
         #Identificar os postos que não sofreram alterações em seus preços
             if (valor_repetido_gas == valorGasolina and valor_repetido_al == valorAlcool and valor_repetido_die == valorDiesel):
-                delete_collection(precos_usuarios_ref, 10) 
+                deletar_colletion(precos_usuarios_ref, 10) 
 
-
-             
             else: 
             #Salvar os preços final no banco de dados
                 precos_finais = {
@@ -130,10 +140,10 @@ for postos in postos_docs:
                 
                 else:
                     mensagem = mensagem + ',' + posto_alter
-                delete_collection(preco_ref, 10)
-                postos.reference.collection('Precos').add(precos_finais)
-                print('Preço final criado para Posto ID:', postos.id)
-                delete_collection(precos_usuarios_ref, 10)
+                deletar_colletion(preco_ref, 10)
+                posto.reference.collection('Precos').add(precos_finais)
+                print('Preço final criado para Posto ID:', posto.id)
+                deletar_colletion(precos_usuarios_ref, 10)
             
 
 print('Postos que sofreram alteração')
@@ -145,7 +155,7 @@ for aparelho in aparelhos_docs:
             aparelho_doc = aparelho.to_dict()
             token = aparelho_doc.get("token")
                 
-            send_notification(token, mensagem_postos)
+            enviar_notificacao(token, mensagem_postos)
             print('Notificação enviada')
 
 
